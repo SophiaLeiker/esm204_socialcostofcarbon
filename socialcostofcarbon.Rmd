@@ -1,0 +1,166 @@
+---
+title: "Social Cost of Carbon"
+author: "Sophia Leiker"
+date: "5/22/2022"
+output: html_document
+---
+
+```{r setup, include= TRUE, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(here)
+library(broom)
+library(patchwork)
+options(scipen = 999)
+# reading in damages data, creating new column for squared damages
+damages <- read_csv(here("data", "damages.csv")) %>% 
+  mutate(warming_q = warming^2)
+# reading in warming data
+warming <- read_csv(here("data", "warming.csv"))
+```
+
+```{r}
+# creating a quadratic model
+qm_damages <- lm(damages ~ 0 + warming + warming_q, data = damages)
+damages_predict <- augment(qm_damages)
+# visualizing the model 
+ggplot(data = damages, aes(x = warming, y = damages/1e+12)) +
+  geom_point(color = "black", size = 0.7) +
+  geom_line(data = damages_predict, aes(x = warming, y = .fitted/1e+12, color = .fitted), size = 1.2) +
+  scale_color_gradientn(colors = c("gold", "firebrick", "darkred")) +
+  theme_minimal(14) +
+  labs(x = "Warming (degrees C)", y = "Damages (trillions USD)") +
+  scale_x_continuous(n.breaks = 10) +
+  theme(legend.position = "none")
+```
+
+
+```{r}
+# storing a function for damages from warming based on the quadratic model
+damages <- function(warming) {
+  damages <- qm_damages$coefficients[1]*warming + qm_damages$coefficients[2]*(warming^2)
+  return(damages)
+}
+# creating a new dataframe with differences and damages per ton based on degrees of warming 
+pulse <- warming %>% 
+  mutate(damages_baseline = damages(warming_baseline)) %>% 
+  mutate(damages_pulse = damages(warming_pulse)) %>% 
+  mutate(difference = damages_pulse - damages_baseline) %>% 
+  mutate(damage_per_ton = difference/35e+9)
+```
+
+```{r}
+## 3. Social cost of carbon
+
+# creating a dataframe with discounted damages based on several discount rates
+scc <- pulse %>% 
+  mutate(years_into_future = year-2022) %>% 
+  mutate(scc_not_discounted = difference/35e+9) %>% 
+  mutate(dr0.25 = scc_not_discounted/(1.0025^years_into_future)) %>% 
+  mutate(dr0.5 = scc_not_discounted/(1.005^years_into_future)) %>% 
+  mutate(dr0.75 = scc_not_discounted/(1.0075^years_into_future)) %>% 
+  mutate(dr1 = scc_not_discounted/(1.01^years_into_future)) %>% 
+  mutate(dr1.5 = scc_not_discounted/(1.015^years_into_future)) %>% 
+  mutate(dr2 = scc_not_discounted/(1.02^years_into_future)) %>% 
+  mutate(dr3 = scc_not_discounted/(1.03^years_into_future)) %>% 
+  mutate(dr4 = scc_not_discounted/(1.04^years_into_future)) %>% 
+  mutate(dr5 = scc_not_discounted/(1.05^years_into_future)) %>% 
+  mutate(dr6 = scc_not_discounted/(1.06^years_into_future)) %>% 
+  mutate(dr2.1 = scc_not_discounted/(1.021^years_into_future))
+  
+scc0.025 <- sum(scc$dr0.25)
+scc0.5 <- sum(scc$dr0.5)
+scc0.75 <- sum(scc$dr0.75)
+scc1 <- sum(scc$dr1)
+scc1.5 <- sum(scc$dr1.5)
+scc2 <- sum(scc$dr2)
+scc3 <- sum(scc$dr3)
+scc4 <- sum(scc$dr4)
+scc5 <- sum(scc$dr5)
+scc6 <- sum(scc$dr6)
+scc_vector <- c(scc0.025, scc0.5, scc0.75, scc1, scc1.5, scc2, scc3, scc4, scc5, scc6)
+dr <- c(0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 6)
+scc_table <- data.frame(scc_vector, dr)
+# plotting SCC vs. discount rate
+ggplot(data = scc_table, aes(x = dr, y = scc_vector)) +
+    geom_line() +
+  geom_col(size = 3, fill = "darkred") +
+  labs(x = "Discount rate (%)", y = "Social cost of carbon") +
+  theme_minimal(14) +
+  scale_x_continuous(n.breaks = 10) +
+  # geom_text(aes(x = dr, y = scc_vector, label = dr), nudge_y = 4) +
+  geom_text(aes(x = dr, y = scc_vector, label = paste("$", round(scc_vector, 0))), nudge_y = -11, angle = 90, color = "white ") +
+  geom_text(aes(x = 0.25, y = -3, label = ".25"), size = 3.2, color = "grey28") +
+  geom_text(aes(x = 0.5, y = -3, label = ".5"), size = 3.2, color = "grey28") +
+  geom_text(aes(x = 0.75, y = -3, label = ".75"), size = 3.2, color = "grey28") +
+  geom_text(aes(x = 1.5, y = -3, label = "1.5"), size = 3.2, color = "grey28")
+```
+
+
+```{r}
+# calculating the discount rate using the ramsey rule from the information given
+rr <- (0.001 + 2*0.01)*100
+```
+
+### Using the Ramsey Rule, we find our discount rate to be **2.1%**
+
+```{r}
+# calculating the social cost of carbon using the ramsey rule
+scc2.1 <- sum(scc$dr2.1)
+# locating this discount rate on the graph
+ggplot(data = scc_table, aes(x = dr, y = scc_vector)) +
+    geom_line(alpha = 0.7) +
+  geom_col(size = 3, fill = "darkred", alpha = 0.7) +
+  labs(x = "Discount rate (%)", y = "Social cost of carbon") +
+  theme_minimal(14) +
+  scale_x_continuous(n.breaks = 10) +
+  geom_point(aes(y = scc2.1, x = rr), size = 7, shape = 8) +
+  geom_text(aes(y = scc2.1, x = 4, label = "SCC = $71 at a discount rate of 2.1%"), size = 5, shape = 8)
+  
+```
+
+```{r}
+# creating a dataframe to calculate expected values
+policy <- pulse %>% 
+  mutate(warming_policy_a = 1.5*warming_baseline) %>% # 0.5 chance of this occurring under A
+  mutate(warming_policy_b = ifelse(year < 2050, warming_policy_a, 1.29)) %>% # 100% chance of this occurring under B
+  mutate(damages_a = damages(warming_policy_a)) %>% 
+  mutate(damages_b = damages(warming_policy_b)) %>%
+  mutate(years_into_future = year-2022) %>% 
+  mutate(damages_a_discounted = damages_a/(1.02^years_into_future)) %>%
+  mutate(damages_b_discounted = damages_b/(1.02^years_into_future)) %>% 
+  mutate(damages_baseline_discounted = damages_baseline/(1.02^years_into_future))
+# expected values
+ev_a <- 0.5*sum(policy$damages_baseline_discounted) + 0.5*sum(policy$damages_a_discounted)
+ev_b <- sum(policy$damages_b_discounted)
+```
+
+### Damages under each policy 
+Expected present value of damages up to 2100 under **Policy A**: $`r round(ev_a/1e+12, 0)` trillion
+
+Expected present value of damages up to 2100 under **Policy B**: $`r round(ev_b/1e+12, 0)` trillion
+
+```{r}
+# sequence for cost
+cost <- seq(0, 5e15, by = 1e12) 
+cost_df <- data.frame(cost) 
+cost_compare <- cost_df %>% 
+  mutate(cost_b = ev_b + cost) %>% 
+  mutate(cost_a = ev_a)
+# visualizing cost and damages of policy options
+ggplot(data = cost_compare) +
+  geom_line(aes(x = cost/1e12, y = cost_a/1e12), size = 1.2, color = "darkred") + 
+  geom_line(aes(x = cost/1e12, y = cost_b/1e12), size = 1.2, color = "cyan4") +
+  theme_minimal(14) + 
+  labs(x = "Cost to implement policy (trillions USD)", y = "Expected value of total cost (trillions USD)") +
+  geom_text(aes(x = 4000, y = 3200, label = "Policy A"), color = "firebrick", size = 4) +
+  geom_text(aes(x = 4000, y = 5300, label = "Policy B"), color = "cyan4", angle = 32, size = 4) +
+  geom_vline(xintercept = 1970, linetype = "dashed", size = 1.2) +
+  geom_text(aes(x = 1000, y = 6000, label = "Enact Policy B"), size = 4) +
+  geom_text(aes(x = 3400, y = 6000, label = "Enact Policy A"), size = 4) +
+  scale_y_continuous(limits = c(0, 6000))
+```
+
+
+
+
